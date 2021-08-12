@@ -1,0 +1,210 @@
+use std::str::FromStr;
+use lalrpop_util::ErrorRecovery;
+use crate::ast::*;
+use generational_arena::Arena;
+
+grammar<'err>(
+    statement_arena: &mut Arena<Statement>,
+    expression_arena: &mut Arena<Expression>,
+    errors: &'err mut Vec<ErrorRecovery<usize, lalrpop_util::lexer::Token<'input>, &'static str>>
+);
+
+pub Program: (Vec<Path>, Vec<Node>) = {
+    <imports:Path*> <nodes:Node*> => (imports, nodes),
+};
+
+Import: Path = {
+    "import" <p:Path> => p
+};
+
+Node: Node = {
+     "fun" <name:Name> "(" <args:Comma<TypedName>> ")" <return_type:(":" <TypeName>)?> "{" <statements:Statement*> "}" => {
+         let r = match return_type {
+             Some(t) => t,
+             None => TypeName {path:Path(vec![]), name: "Void".to_string(), arguments: vec![]},
+         };
+         Node::Function {
+             name: name,
+             params: args,
+             return_type: r,
+             statements: statements,
+         }
+     },
+     ! => { errors.push(<>); Node::Error },
+};
+
+Statement: StatementIndex = {
+    "let" <typed_name:TypedName> "=" <expression:Expression> ";" => {
+        statement_arena.insert(Statement::Let {
+            name: typed_name,
+            value: expression
+        })
+    },
+    "if" <cond:Expression> "{" <block:Statement*> "}"
+    <elifStatements:("else" "if" <Expression> "{" <Statement*> "}")*>
+    <elseStatement:("else" "{" <Statement*> "}")?> => {
+        let mut childIfStatement = match elseStatement {
+            Some(statements) => {
+                let cond = expression_arena.insert(Expression::BoolLiteral(true));
+                Some(statement_arena.insert(Statement::If {
+                    condition: cond,
+                    body: statements,
+                    else_if: None,
+                }))
+            },
+            None => None,
+        };
+
+        for elifStatement in elifStatements.iter().rev() {
+            let cond = elifStatement.0;
+            let statements = elifStatement.1.clone();
+            childIfStatement = Some(statement_arena.insert(Statement::If {
+                condition: cond,
+                body: statements,
+                else_if: childIfStatement,
+            }));
+        }
+        statement_arena.insert(Statement::If {
+            condition: cond,
+            body: block,
+            else_if: childIfStatement,
+        })
+    },
+    "return" <expression:Expression> ";" => {
+        statement_arena.insert(Statement::Return {
+            value: expression,
+        })
+    },
+    <name:Name> "=" <expression:Expression> ";" => {
+        statement_arena.insert(Statement::Assign {
+            name: name,
+            value: expression,
+        })
+    },
+};
+
+Expression: ExpressionIndex = {
+    BinOp0,
+};
+
+BinOp0: ExpressionIndex = {
+    <l:BinOp0> "+" <r:BinOp1> => expression_arena.insert(Expression::BinOp(l, BinOpType::Plus, r)),
+    <l:BinOp0> "-" <r:BinOp1> => expression_arena.insert(Expression::BinOp(l, BinOpType::Minus, r)),
+    BinOp1,
+};
+
+BinOp1: ExpressionIndex = {
+    <l:BinOp1> "*" <r:BinOp2> => expression_arena.insert(Expression::BinOp(l, BinOpType::Star, r)),
+    <l:BinOp1> "/" <r:BinOp2> => expression_arena.insert(Expression::BinOp(l, BinOpType::ForwardSlash, r)),
+    BinOp2,
+};
+
+BinOp2: ExpressionIndex = {
+    <l:BinOp2> "<" <r:BinOp3> => expression_arena.insert(Expression::BinOp(l, BinOpType::LessThan, r)),
+    <l:BinOp2> "<=" <r:BinOp3> => expression_arena.insert(Expression::BinOp(l, BinOpType::LessThanEqualTo, r)),
+    <l:BinOp2> ">" <r:BinOp3> => expression_arena.insert(Expression::BinOp(l, BinOpType::GreaterThan, r)),
+    <l:BinOp2> ">=" <r:BinOp3> => expression_arena.insert(Expression::BinOp(l, BinOpType::GreaterThanEqualTo, r)),
+    BinOp3,
+};
+
+BinOp3: ExpressionIndex = {
+    <l:BinOp3> "&&" <r:Term> => expression_arena.insert(Expression::BinOp(l, BinOpType::And, r)),
+    <l:BinOp3> "||" <r:Term> => expression_arena.insert(Expression::BinOp(l, BinOpType::Or, r)),
+    Term,
+};
+
+Term: ExpressionIndex = {
+    <name:Name> => expression_arena.insert(Expression::Ref(name)),
+    <num:Num> => expression_arena.insert(Expression::NatLiteral(num)),
+    "(" <bin_op:BinOp0> ")" => bin_op,
+};
+
+
+// PARTS
+
+
+TypeName: TypeName = {
+    <name:NamespacedName> <args:("[" <Comma<TypeName>> "]")?> => {
+        let mut boxed_args: Vec<Box<TypeName>> = Vec::new();
+        match args {
+            Some(args) => {
+                for arg in args {
+                    boxed_args.push(Box::new(arg));
+                }
+            }
+            _ => {}
+        }
+        TypeName {
+            path: name.0,
+            name: name.1,
+            arguments: boxed_args,
+        }
+    },
+};
+
+Type: Type = {
+    <type_name:TypeName> => {
+        Type::Base(type_name)
+    },
+    "{" <var:Name> ":" <type_name:TypeName> "|" <expression:Expression> "}" => {
+        Type::Refinement(var, type_name, expression)
+    },
+};
+
+TypedName: TypedName = {
+    <name:Name> ":" <typ:Type> => {
+        TypedName {
+            name,
+            typ: Some(typ),
+        }
+    },
+    <name:Name> => {
+        TypedName {
+            name,
+            typ: None,
+        }
+    },
+};
+
+NamespacedName: (Path, String) = {
+    <n:(<Name> "::")*> <e:Name> => (Path(n), e),
+};
+
+Path: Path = {
+    <names:(Name "::")*> <e:Name> => {
+        let mut parts = Vec::with_capacity(names.len());
+        for name in names {
+            parts.push(name.0);
+        }
+        parts.push(e);
+        Path(parts)
+    },
+};
+
+Bool: bool = {
+    "true" => true,
+    "false" => false,
+};
+
+Num: i64 = {
+    r"[0-9]+" => i64::from_str(<>).unwrap()
+};
+
+Name: String = {
+    r"[a-zA-Z][a-zA-Z0-9_]*" => <>.to_string()
+};
+
+
+// MACROS
+
+
+Comma<T>: Vec<T> = {
+    <v:(<T> ",")*> <e:T?> => match e {
+        None => v,
+        Some(e) => {
+            let mut v = v;
+            v.push(e);
+            v
+        }
+    }
+};
