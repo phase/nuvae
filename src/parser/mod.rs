@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use lalrpop_util::*;
 use lalrpop_util::lexer::Token;
@@ -65,16 +66,19 @@ impl Parser {
         self.diagnostics.add_diagnostic(diagnostic);
     }
 
-    pub fn parse(&mut self, path: Path, file_name: String, code: String) -> Option<(Arena<Statement>, Arena<Expression>, Program)> {
+    pub fn parse(&mut self, path: Path, file_name: String, code: String) -> Option<Program> {
         let file_id = self.diagnostics.add_file(file_name.clone(), code.clone());
         let file_name_parts: Vec<&str> = file_name.splitn(2, ".").collect();
         let module_name = file_name_parts.get(0).unwrap();
 
         let mut errors: Vec<ErrorRecovery<usize, Token, &str>> = Vec::new();
-        let mut statement_arena = Arena::<Statement>::new();
-        let mut expression_arena = Arena::<Expression>::new();
+        let mut program_arena = ProgramArena::new();
 
-        let result: Result<(Vec<Path>, Vec<Node>), ParseError<usize, Token, &str>> = grammar::ProgramParser::new().parse(&mut statement_arena, &mut expression_arena, &mut errors, &code);
+        let result: Result<Vec<Path>, ParseError<usize, Token, &str>> = grammar::ProgramParser::new().parse(
+            &mut program_arena,
+            &mut errors,
+            &code
+        );
 
         if errors.len() > 0 {
             for error in errors {
@@ -84,17 +88,15 @@ impl Parser {
         }
 
         return match result {
-            Ok((imports, nodes)) => {
-                Some((
-                    statement_arena,
-                    expression_arena,
+            Ok(imports) => {
+                Some(
                     Program {
                         path,
                         file_name: module_name.to_string(),
                         imports,
-                        nodes,
+                        program_arena,
                     }
-                ))
+                )
             }
             Err(error) => {
                 self.add_parse_error(file_id, error);

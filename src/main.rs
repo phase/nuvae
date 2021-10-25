@@ -1,30 +1,61 @@
 mod ast;
 mod parser;
 mod diagnostic;
+mod ir;
 
 fn main() {
     let test_file = "test.nuv";
     let test_source = "\
-    fun test(a: {v: Int32 | v >= 0 && v <= 10}, b): Int32 {
+
+    interface CoolInterface {
+        fun publicFunc(x: Int32, y: Int32);
+    }
+
+    public struct CoolApi {
+        public let CONSTANT = 7;
+    }
+
+    struct X {
+        let x = 2;
+
+        fun test(): Int32 {
+            return 7;
+        }
+    }
+
+    fun testRefinement(a: (v: Int32 | v >= 0 and v <= 10 + 7), b): Int32 {
         let x = 1;
         let y = 0;
         if x < a {
             y = 7;
         } else if x >= 500 {
             y = 5;
-        } else if x >= a && x < b {
+        } else if x >= a and x < b {
             y = 9;
         } else {
-           y = b;
+            y = b;
         }
         return y;
-    }".to_string();
+    }
+
+    fun testRow(x: {field1: Int32, field2: Int32}) {
+
+    }
+
+    type Nat32 = (v: Int32 | v >= 0);
+    struct Box {
+        let x: Int32;
+    }
+    type PosBox = (b: Box | b.x >= 0);
+    type PosBox2 = (b: {x: Int32} | b.x >= 0);
+    ".to_string();
     let mut parser = parser::Parser::new();
     let parsed_program = parser.parse(ast::Path::of("test"), test_file.to_string(), test_source);
     parser.diagnostics.emit_errors();
-    if let Some((statement_arena, expression_arena, program)) = parsed_program {
-        dbg!(program);
-        dbg!(statement_arena);
-        dbg!(expression_arena);
+    if let Some(mut program) = parsed_program {
+        for (_index, exp) in program.program_arena.expression_arena.iter() {
+            println!("{}", exp.to_string(&program.program_arena));
+        }
     }
+    println!("parse successful!")
 }

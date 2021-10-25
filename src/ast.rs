@@ -1,6 +1,11 @@
-use generational_arena::Index;
+use std::cell::RefCell;
+use std::fmt;
+use std::fmt::Formatter;
+use generational_arena::{Arena, Index};
 use crate::ast::Node::Function;
 
+pub type TypeIndex = Index;
+pub type NodeIndex = Index;
 pub type StatementIndex = Index;
 pub type ExpressionIndex = Index;
 
@@ -32,23 +37,43 @@ impl Path {
 }
 
 #[derive(Clone, Debug)]
+pub struct ProgramArena {
+    pub type_arena: Arena<Type>,
+    pub node_arena: Arena<Node>,
+    pub statement_arena: Arena<Statement>,
+    pub expression_arena: Arena<Expression>,
+}
+
+impl ProgramArena {
+    pub fn new() -> ProgramArena {
+        ProgramArena {
+            type_arena: Arena::new(),
+            node_arena: Arena::new(),
+            statement_arena: Arena::new(),
+            expression_arena: Arena::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct Program {
     pub path: Path,
     pub file_name: String,
     pub imports: Vec<Path>,
-    pub nodes: Vec<Node>,
+    pub program_arena: ProgramArena,
 }
 
 #[derive(Clone, Debug)]
 pub struct TypedName {
     pub name: String,
-    pub typ: Option<Type>,
+    pub typ: Option<TypeIndex>,
 }
 
 #[derive(Clone, Debug)]
 pub enum Type {
     Base(TypeName),
-    Refinement(String, TypeName, ExpressionIndex),
+    Refinement(String, TypeIndex, ExpressionIndex),
+    Row(Vec<TypedName>)
 }
 
 #[derive(Clone, Debug)]
@@ -82,13 +107,46 @@ impl From<(Path, String)> for TypeName {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum Access {
+    Public,
+    Internal
+}
+
 #[derive(Clone, Debug)]
 pub enum Node {
+    TypeAlias {
+        access: Access,
+        name: String,
+        value: TypeIndex,
+    },
+    Variable {
+        access: Access,
+        name: TypedName,
+        value: Option<ExpressionIndex>,
+    },
     Function {
+        access: Access,
         name: String,
         params: Vec<TypedName>,
         return_type: TypeName,
         statements: Vec<StatementIndex>,
+    },
+    FunctionPrototype {
+        name: String,
+        params: Vec<TypedName>,
+        return_type: TypeName,
+    },
+    Struct {
+        access: Access,
+        name: String,
+        params: Vec<TypedName>,
+        children: Vec<NodeIndex>,
+    },
+    Interface {
+        name: String,
+        params: Vec<TypedName>,
+        children: Vec<NodeIndex>,
     },
     Error,
 }
@@ -123,6 +181,60 @@ pub enum Expression {
     NatLiteral(i64),
     BoolLiteral(bool),
     BinOp(ExpressionIndex, BinOpType, ExpressionIndex),
+    FieldAccessor {
+        aggregate: ExpressionIndex,
+        name: String,
+    }
+}
+
+impl Expression {
+    pub fn to_string(&self, program_arena: &ProgramArena) -> String {
+        match self {
+            Expression::BinOp(a, o, b) => {
+                let a_opt = program_arena.expression_arena.get(*a);
+                let b_opt = program_arena.expression_arena.get(*b);
+                if let (Some(a_exp), Some(b_exp)) = (a_opt, b_opt) {
+                    format!("({} {} {})", a_exp.to_string(program_arena), o, b_exp.to_string(program_arena))
+                } else {
+                    format!("{}", self)
+                }
+            }
+            Expression::FieldAccessor {aggregate, name } => {
+                let agg_opt = program_arena.expression_arena.get(*aggregate);
+                if let Some(agg_exp) = agg_opt {
+                    format!("{}.{}", agg_exp.to_string(program_arena), name)
+                } else {
+                    format!("{}", self)
+                }
+            }
+            e => format!("{}", e)
+        }
+    }
+}
+
+impl fmt::Display for Expression {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Expression::Ref(r) => {
+                write!(f, "{}", r)
+            }
+            Expression::NatLiteral(n) => {
+                write!(f, "{}", n)
+            }
+            Expression::BoolLiteral(b) => {
+                write!(f, "{}", b)
+            }
+            Expression::BinOp(a, o, b) => {
+                let (a_index, _) = a.into_raw_parts();
+                let (b_index, _) = b.into_raw_parts();
+                write!(f, "#{} {} #{}", a_index, o, b_index)
+            }
+            Expression::FieldAccessor { aggregate, name } => {
+                let (agg_parts, _) = aggregate.into_raw_parts();
+                write!(f, "#{}.{}", agg_parts, name)
+            }
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -137,4 +249,21 @@ pub enum BinOpType {
     GreaterThanEqualTo,
     And,
     Or,
+}
+
+impl fmt::Display for BinOpType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", match self {
+            BinOpType::Plus => "+",
+            BinOpType::Minus => "-",
+            BinOpType::Star => "*",
+            BinOpType::ForwardSlash => "/",
+            BinOpType::LessThan => "<",
+            BinOpType::GreaterThan => ">",
+            BinOpType::LessThanEqualTo => "<=",
+            BinOpType::GreaterThanEqualTo => ">=",
+            BinOpType::And => "and",
+            BinOpType::Or => "or",
+        })
+    }
 }

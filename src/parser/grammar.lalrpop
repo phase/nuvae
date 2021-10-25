@@ -4,38 +4,78 @@ use crate::ast::*;
 use generational_arena::Arena;
 
 grammar<'err>(
-    statement_arena: &mut Arena<Statement>,
-    expression_arena: &mut Arena<Expression>,
+    program_arena: &mut ProgramArena,
     errors: &'err mut Vec<ErrorRecovery<usize, lalrpop_util::lexer::Token<'input>, &'static str>>
 );
 
-pub Program: (Vec<Path>, Vec<Node>) = {
-    <imports:Path*> <nodes:Node*> => (imports, nodes),
+pub Program: Vec<Path> = {
+    <imports:Import*> <nodes:Node*> => imports
 };
 
 Import: Path = {
     "import" <p:Path> => p
 };
 
-Node: Node = {
-     "fun" <name:Name> "(" <args:Comma<TypedName>> ")" <return_type:(":" <TypeName>)?> "{" <statements:Statement*> "}" => {
-         let r = match return_type {
-             Some(t) => t,
-             None => TypeName {path:Path(vec![]), name: "Void".to_string(), arguments: vec![]},
-         };
-         Node::Function {
-             name: name,
-             params: args,
-             return_type: r,
-             statements: statements,
-         }
-     },
-     ! => { errors.push(<>); Node::Error },
+Node: NodeIndex = {
+    <access:Access?> "let" <typed_name:TypedName> <expression:("=" <Expression>)?> ";" => {
+        program_arena.node_arena.insert(Node::Variable {
+            access: access.unwrap_or(Access::Internal),
+            name: typed_name,
+            value: expression
+        })
+    },
+    <access:Access?> "fun" <name:Name> "(" <args:Comma<TypedName>> ")" <return_type:(":" <TypeName>)?> "{" <statements:Statement*> "}" => {
+        program_arena.node_arena.insert(Node::Function {
+            access: access.unwrap_or(Access::Internal),
+            name,
+            params: args,
+            return_type: return_type.unwrap_or(TypeName {
+                path:Path(vec![]),
+                name: "Void".to_string(),
+                arguments: vec![]
+            }),
+            statements
+        })
+    },
+    "fun" <name:Name> "(" <args:Comma<TypedName>> ")" <return_type:(":" <TypeName>)?> ";" => {
+        program_arena.node_arena.insert(Node::FunctionPrototype {
+            name,
+            params: args,
+            return_type: return_type.unwrap_or(TypeName {
+                path:Path(vec![]),
+                name: "Void".to_string(),
+                arguments: vec![]
+            })
+        })
+    },
+    <access:Access?> "struct" <name:Name> <params:("[" <TypedName*> "]")?> "{" <children:Node*> "}" => {
+        program_arena.node_arena.insert(Node::Struct {
+            access: access.unwrap_or(Access::Internal),
+            name,
+            params: params.unwrap_or(vec![]),
+            children,
+        })
+    },
+    "interface" <name:Name> <params:("[" <TypedName*> "]")?> "{" <children:Node*> "}" => {
+        program_arena.node_arena.insert(Node::Interface {
+            name,
+            params: params.unwrap_or(vec![]),
+            children,
+        })
+    },
+    <access:Access?> "type" <name:Name> "=" <typ:Type> ";" => {
+        program_arena.node_arena.insert(Node::TypeAlias {
+            access: access.unwrap_or(Access::Internal),
+            name,
+            value: typ,
+        })
+    },
+    ! => { errors.push(<>); program_arena.node_arena.insert(Node::Error) },
 };
 
 Statement: StatementIndex = {
     "let" <typed_name:TypedName> "=" <expression:Expression> ";" => {
-        statement_arena.insert(Statement::Let {
+        program_arena.statement_arena.insert(Statement::Let {
             name: typed_name,
             value: expression
         })
@@ -43,10 +83,10 @@ Statement: StatementIndex = {
     "if" <cond:Expression> "{" <block:Statement*> "}"
     <elifStatements:("else" "if" <Expression> "{" <Statement*> "}")*>
     <elseStatement:("else" "{" <Statement*> "}")?> => {
-        let mut childIfStatement = match elseStatement {
+        let mut child_if_statement = match elseStatement {
             Some(statements) => {
-                let cond = expression_arena.insert(Expression::BoolLiteral(true));
-                Some(statement_arena.insert(Statement::If {
+                let cond = program_arena.expression_arena.insert(Expression::BoolLiteral(true));
+                Some(program_arena.statement_arena.insert(Statement::If {
                     condition: cond,
                     body: statements,
                     else_if: None,
@@ -58,26 +98,26 @@ Statement: StatementIndex = {
         for elifStatement in elifStatements.iter().rev() {
             let cond = elifStatement.0;
             let statements = elifStatement.1.clone();
-            childIfStatement = Some(statement_arena.insert(Statement::If {
+            child_if_statement = Some(program_arena.statement_arena.insert(Statement::If {
                 condition: cond,
                 body: statements,
-                else_if: childIfStatement,
+                else_if: child_if_statement,
             }));
         }
-        statement_arena.insert(Statement::If {
+        program_arena.statement_arena.insert(Statement::If {
             condition: cond,
             body: block,
-            else_if: childIfStatement,
+            else_if: child_if_statement,
         })
     },
     "return" <expression:Expression> ";" => {
-        statement_arena.insert(Statement::Return {
+        program_arena.statement_arena.insert(Statement::Return {
             value: expression,
         })
     },
     <name:Name> "=" <expression:Expression> ";" => {
-        statement_arena.insert(Statement::Assign {
-            name: name,
+        program_arena.statement_arena.insert(Statement::Assign {
+            name,
             value: expression,
         })
     },
@@ -88,34 +128,39 @@ Expression: ExpressionIndex = {
 };
 
 BinOp0: ExpressionIndex = {
-    <l:BinOp0> "+" <r:BinOp1> => expression_arena.insert(Expression::BinOp(l, BinOpType::Plus, r)),
-    <l:BinOp0> "-" <r:BinOp1> => expression_arena.insert(Expression::BinOp(l, BinOpType::Minus, r)),
+    <l:BinOp0> "and" <r:BinOp1> => program_arena.expression_arena.insert(Expression::BinOp(l, BinOpType::And, r)),
+    <l:BinOp0> "or" <r:BinOp1> => program_arena.expression_arena.insert(Expression::BinOp(l, BinOpType::Or, r)),
     BinOp1,
 };
 
 BinOp1: ExpressionIndex = {
-    <l:BinOp1> "*" <r:BinOp2> => expression_arena.insert(Expression::BinOp(l, BinOpType::Star, r)),
-    <l:BinOp1> "/" <r:BinOp2> => expression_arena.insert(Expression::BinOp(l, BinOpType::ForwardSlash, r)),
+    <l:BinOp1> "<" <r:BinOp2> => program_arena.expression_arena.insert(Expression::BinOp(l, BinOpType::LessThan, r)),
+    <l:BinOp1> "<=" <r:BinOp2> => program_arena.expression_arena.insert(Expression::BinOp(l, BinOpType::LessThanEqualTo, r)),
+    <l:BinOp1> ">" <r:BinOp2> => program_arena.expression_arena.insert(Expression::BinOp(l, BinOpType::GreaterThan, r)),
+    <l:BinOp1> ">=" <r:BinOp2> => program_arena.expression_arena.insert(Expression::BinOp(l, BinOpType::GreaterThanEqualTo, r)),
     BinOp2,
 };
 
 BinOp2: ExpressionIndex = {
-    <l:BinOp2> "<" <r:BinOp3> => expression_arena.insert(Expression::BinOp(l, BinOpType::LessThan, r)),
-    <l:BinOp2> "<=" <r:BinOp3> => expression_arena.insert(Expression::BinOp(l, BinOpType::LessThanEqualTo, r)),
-    <l:BinOp2> ">" <r:BinOp3> => expression_arena.insert(Expression::BinOp(l, BinOpType::GreaterThan, r)),
-    <l:BinOp2> ">=" <r:BinOp3> => expression_arena.insert(Expression::BinOp(l, BinOpType::GreaterThanEqualTo, r)),
+    <l:BinOp2> "*" <r:BinOp3> => program_arena.expression_arena.insert(Expression::BinOp(l, BinOpType::Star, r)),
+    <l:BinOp2> "/" <r:BinOp3> => program_arena.expression_arena.insert(Expression::BinOp(l, BinOpType::ForwardSlash, r)),
     BinOp3,
 };
 
 BinOp3: ExpressionIndex = {
-    <l:BinOp3> "&&" <r:Term> => expression_arena.insert(Expression::BinOp(l, BinOpType::And, r)),
-    <l:BinOp3> "||" <r:Term> => expression_arena.insert(Expression::BinOp(l, BinOpType::Or, r)),
+    <l:BinOp3> "+" <r:Term> => program_arena.expression_arena.insert(Expression::BinOp(l, BinOpType::Plus, r)),
+    <l:BinOp3> "-" <r:Term> => program_arena.expression_arena.insert(Expression::BinOp(l, BinOpType::Minus, r)),
+    <aggregate:BinOp3> "." <name:Name> => program_arena.expression_arena.insert(Expression::FieldAccessor {
+        aggregate,
+        name,
+    }),
     Term,
 };
 
 Term: ExpressionIndex = {
-    <name:Name> => expression_arena.insert(Expression::Ref(name)),
-    <num:Num> => expression_arena.insert(Expression::NatLiteral(num)),
+    <name:Name> => program_arena.expression_arena.insert(Expression::Ref(name)),
+    <num:Num> => program_arena.expression_arena.insert(Expression::NatLiteral(num)),
+    <bool:Bool> => program_arena.expression_arena.insert(Expression::BoolLiteral(bool)),
     "(" <bin_op:BinOp0> ")" => bin_op,
 };
 
@@ -142,12 +187,15 @@ TypeName: TypeName = {
     },
 };
 
-Type: Type = {
+Type: TypeIndex = {
     <type_name:TypeName> => {
-        Type::Base(type_name)
+        program_arena.type_arena.insert(Type::Base(type_name))
     },
-    "{" <var:Name> ":" <type_name:TypeName> "|" <expression:Expression> "}" => {
-        Type::Refinement(var, type_name, expression)
+    "(" <var:Name> ":" <inner_type:Type> "|" <expression:Expression> ")" => {
+        program_arena.type_arena.insert(Type::Refinement(var, inner_type, expression))
+    },
+    "{" <fields:Comma<TypedName>> "}" => {
+        program_arena.type_arena.insert(Type::Row(fields))
     },
 };
 
@@ -185,6 +233,10 @@ Bool: bool = {
     "true" => true,
     "false" => false,
 };
+
+Access: Access = {
+    "public" => Access::Public,
+}
 
 Num: i64 = {
     r"[0-9]+" => i64::from_str(<>).unwrap()
