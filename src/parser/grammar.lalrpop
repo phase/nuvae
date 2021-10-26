@@ -63,9 +63,10 @@ Node: NodeIndex = {
             children,
         })
     },
-    <access:Access?> "type" <name:Name> "=" <typ:Type> ";" => {
+    <access:Access?> <unique:"unique"?> "type" <name:Name> "=" <typ:Type> ";" => {
         program_arena.node_arena.insert(Node::TypeAlias {
             access: access.unwrap_or(Access::Internal),
+            unique: unique.is_some(),
             name,
             value: typ,
         })
@@ -148,14 +149,40 @@ BinOp2: ExpressionIndex = {
 };
 
 BinOp3: ExpressionIndex = {
-    <l:BinOp3> "+" <r:Term> => program_arena.expression_arena.insert(Expression::BinOp(l, BinOpType::Plus, r)),
-    <l:BinOp3> "-" <r:Term> => program_arena.expression_arena.insert(Expression::BinOp(l, BinOpType::Minus, r)),
-    <aggregate:BinOp3> "." <name:Name> => program_arena.expression_arena.insert(Expression::FieldAccessor {
+    <l:BinOp3> "+" <r:BinOp4> => program_arena.expression_arena.insert(Expression::BinOp(l, BinOpType::Plus, r)),
+    <l:BinOp3> "-" <r:BinOp4> => program_arena.expression_arena.insert(Expression::BinOp(l, BinOpType::Minus, r)),
+    <pointer:BinOp3> ".*" => program_arena.expression_arena.insert(Expression::Dereference {
+        pointer
+    }),
+    <optional:BinOp3> ".?" => program_arena.expression_arena.insert(Expression::Denull {
+        optional
+    }),
+    <value:BinOp3> ".&" => program_arena.expression_arena.insert(Expression::Borrow {
+        value,
+        mutable: false,
+    }),
+    <value:BinOp3> ".&mut" => program_arena.expression_arena.insert(Expression::Borrow {
+        value,
+        mutable: true,
+    }),
+    <aggregate:BinOp3> "." <value:BinOp4> => program_arena.expression_arena.insert(Expression::FieldAccessor {
         aggregate,
-        name,
+        value,
+    }),
+    BinOp4,
+};
+
+BinOp4: ExpressionIndex = {
+    <function:BinOp4> "(" <args:Comma<Expression>> ")" => program_arena.expression_arena.insert(Expression::FunctionCall {
+        function,
+        args,
+    }),
+    "new" <type_name:TypeName> "in" <allocator:Term> => program_arena.expression_arena.insert(Expression::New {
+        type_name,
+        allocator,
     }),
     Term,
-};
+}
 
 Term: ExpressionIndex = {
     <name:Name> => program_arena.expression_arena.insert(Expression::Ref(name)),
@@ -169,20 +196,11 @@ Term: ExpressionIndex = {
 
 
 TypeName: TypeName = {
-    <name:NamespacedName> <args:("[" <Comma<TypeName>> "]")?> => {
-        let mut boxed_args: Vec<Box<TypeName>> = Vec::new();
-        match args {
-            Some(args) => {
-                for arg in args {
-                    boxed_args.push(Box::new(arg));
-                }
-            }
-            _ => {}
-        }
+    <name:NamespacedName> <args:("[" <Comma<Type>> "]")?> => {
         TypeName {
             path: name.0,
             name: name.1,
-            arguments: boxed_args,
+            arguments: args.unwrap_or(vec![]),
         }
     },
 };
@@ -196,6 +214,15 @@ Type: TypeIndex = {
     },
     "{" <fields:Comma<TypedName>> "}" => {
         program_arena.type_arena.insert(Type::Row(fields))
+    },
+    "&" <typ:Type> => {
+        program_arena.type_arena.insert(Type::Reference(typ, false))
+    },
+    "&mut" <typ:Type> => {
+        program_arena.type_arena.insert(Type::Reference(typ, true))
+    },
+    "?" <typ:Type> => {
+        program_arena.type_arena.insert(Type::Optional(typ))
     },
 };
 
@@ -236,7 +263,7 @@ Bool: bool = {
 
 Access: Access = {
     "public" => Access::Public,
-}
+};
 
 Num: i64 = {
     r"[0-9]+" => i64::from_str(<>).unwrap()

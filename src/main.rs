@@ -39,7 +39,7 @@ fn main() {
     }
 
     fun testRow(x: {field1: Int32, field2: Int32}) {
-
+        let y = test((x.field1), x.field2);
     }
 
     type Nat32 = (v: Int32 | v >= 0);
@@ -48,13 +48,43 @@ fn main() {
     }
     type PosBox = (b: Box | b.x >= 0);
     type PosBox2 = (b: {x: Int32} | b.x >= 0);
+    unique type Meters = Int32;
+
+    public fun refTest(arena: ArenaAllocator): X {
+        return new X in arena;
+    }
+
+    public fun buildX2(arena: &mut ArenaAllocator): X {
+        return new X in arena;
+    }
+
+    public fun buildX3(arena: &Allocator): X {
+        return new X in arena;
+    }
+
+    public fun derefX(refX: &X): X {
+        return x.*;
+    }
+
+    public fun derefX2(refX: &?X): X {
+        return x.*.?;
+    }
+
+    public fun derefX2(refX: &?&?X): X {
+        let xRefCopy = refX.&.*.&.*;
+        return x.*.?.*.?;
+    }
+
+    fun add(x, y) {
+        return x + y;
+    }
     ".to_string();
     let mut parser = parser::Parser::new();
     let parsed_program = parser.parse(ast::Path::of("test"), test_file.to_string(), test_source);
     parser.diagnostics.emit_errors();
     if let Some(mut program) = parsed_program {
-        for (_index, exp) in program.program_arena.expression_arena.iter() {
-            println!("{}", exp.to_string(&program.program_arena));
+        for (index, exp) in program.program_arena.expression_arena.iter() {
+            println!("#{}: {}", index.into_raw_parts().0, exp.to_string(&program.program_arena));
         }
     }
     println!("parse successful!")

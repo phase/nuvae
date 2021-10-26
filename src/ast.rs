@@ -73,14 +73,16 @@ pub struct TypedName {
 pub enum Type {
     Base(TypeName),
     Refinement(String, TypeIndex, ExpressionIndex),
-    Row(Vec<TypedName>)
+    Row(Vec<TypedName>),
+    Reference(TypeIndex, bool),
+    Optional(TypeIndex),
 }
 
 #[derive(Clone, Debug)]
 pub struct TypeName {
     pub path: Path,
     pub name: String,
-    pub arguments: Vec<Box<TypeName>>,
+    pub arguments: Vec<TypeIndex>,
 }
 
 impl TypeName {
@@ -89,7 +91,7 @@ impl TypeName {
         if self.arguments.len() > 0 {
             name.push_str("[");
             for typ in self.arguments.iter() {
-                name.push_str(&typ.to_string());
+                name.push_str(&format!("{}", typ.into_raw_parts().0));
             }
             name.push_str("]");
         }
@@ -117,6 +119,7 @@ pub enum Access {
 pub enum Node {
     TypeAlias {
         access: Access,
+        unique: bool,
         name: String,
         value: TypeIndex,
     },
@@ -183,7 +186,25 @@ pub enum Expression {
     BinOp(ExpressionIndex, BinOpType, ExpressionIndex),
     FieldAccessor {
         aggregate: ExpressionIndex,
-        name: String,
+        value: ExpressionIndex,
+    },
+    FunctionCall {
+        function: ExpressionIndex,
+        args: Vec<ExpressionIndex>,
+    },
+    New {
+        type_name: TypeName,
+        allocator: ExpressionIndex,
+    },
+    Dereference {
+        pointer: ExpressionIndex,
+    },
+    Denull {
+        optional: ExpressionIndex,
+    },
+    Borrow {
+        value: ExpressionIndex,
+        mutable: bool,
     }
 }
 
@@ -199,14 +220,23 @@ impl Expression {
                     format!("{}", self)
                 }
             }
-            Expression::FieldAccessor {aggregate, name } => {
+            Expression::FieldAccessor {aggregate, value } => {
                 let agg_opt = program_arena.expression_arena.get(*aggregate);
-                if let Some(agg_exp) = agg_opt {
-                    format!("{}.{}", agg_exp.to_string(program_arena), name)
+                let value_opt = program_arena.expression_arena.get(*value);
+                if let (Some(agg_exp), Some(value_exp)) = (agg_opt, value_opt) {
+                    format!("{}.{}", agg_exp.to_string(program_arena), value_exp.to_string(program_arena))
                 } else {
                     format!("{}", self)
                 }
             }
+            Expression::New { type_name, allocator } => {
+                let allocator_opt = program_arena.expression_arena.get(*allocator);
+                if let Some(allocator_exp) = allocator_opt {
+                    format!("new {} in {}", type_name.to_string(), allocator_exp.to_string(program_arena))
+                } else {
+                    format!("{}", self)
+                }
+            },
             e => format!("{}", e)
         }
     }
@@ -229,9 +259,32 @@ impl fmt::Display for Expression {
                 let (b_index, _) = b.into_raw_parts();
                 write!(f, "#{} {} #{}", a_index, o, b_index)
             }
-            Expression::FieldAccessor { aggregate, name } => {
-                let (agg_parts, _) = aggregate.into_raw_parts();
-                write!(f, "#{}.{}", agg_parts, name)
+            Expression::FieldAccessor { aggregate, value } => {
+                let (agg_index, _) = aggregate.into_raw_parts();
+                let (value_index, _) = value.into_raw_parts();
+                write!(f, "#{}.{}", agg_index, value_index)
+            }
+            Expression::FunctionCall { function, args } => {
+                let (function_index, _) = function.into_raw_parts();
+                let arg_indices: Vec<usize> = args.iter().map(|arg| arg.into_raw_parts().0).collect();
+                write!(f, "#{}({:?})", function_index, arg_indices)
+            }
+            Expression::New { type_name, allocator } => {
+                let (allocator_index, _) = allocator.into_raw_parts();
+                write!(f, "new {} in #{}", type_name.to_string(), allocator_index)
+            }
+            Expression::Dereference { pointer } => {
+                let (pointer_index, _) = pointer.into_raw_parts();
+                write!(f, "{}.*", pointer_index)
+            }
+            Expression::Denull { optional } => {
+                let (optional_index, _) = optional.into_raw_parts();
+                write!(f, "{}.?", optional_index)
+            }
+            Expression::Borrow { value, mutable } => {
+                let (value_index, _) = value.into_raw_parts();
+                let m = if mutable { "mut" } else { "" };
+                write!(f, "{}.&{}", value_index, m)
             }
         }
     }
