@@ -24,31 +24,35 @@ Node: NodeIndex = {
             value: expression
         })
     },
-    <access:Access?> "fun" <name:Name> "(" <args:Comma<TypedName>> ")" <return_type:(":" <TypeName>)?> "{" <statements:Statement*> "}" => {
+    <access:Access?> "fun" <name:Name> <type_params:("[" <Comma<TypedName>> "]")?> "(" <args:Comma<TypedName>> ")" <return_type:(":" <Type>)?> "{" <statements:Statement*> "}" => {
+        let return_type = return_type.unwrap_or(program_arena.type_arena.insert(Type::Base(TypeName {
+           path:Path(vec![]),
+           name: "Void".to_string(),
+           arguments: vec![]
+        })));
         program_arena.node_arena.insert(Node::Function {
             access: access.unwrap_or(Access::Internal),
             name,
+            type_params: type_params.unwrap_or(vec![]),
             params: args,
-            return_type: return_type.unwrap_or(TypeName {
-                path:Path(vec![]),
-                name: "Void".to_string(),
-                arguments: vec![]
-            }),
+            return_type,
             statements
         })
     },
-    "fun" <name:Name> "(" <args:Comma<TypedName>> ")" <return_type:(":" <TypeName>)?> ";" => {
+    "fun" <name:Name> <type_params:("[" <Comma<TypedName>> "]")?> "(" <args:Comma<TypedName>> ")" <return_type:(":" <Type>)?> ";" => {
+        let return_type = return_type.unwrap_or(program_arena.type_arena.insert(Type::Base(TypeName {
+           path:Path(vec![]),
+           name: "Void".to_string(),
+           arguments: vec![]
+        })));
         program_arena.node_arena.insert(Node::FunctionPrototype {
             name,
+            type_params: type_params.unwrap_or(vec![]),
             params: args,
-            return_type: return_type.unwrap_or(TypeName {
-                path:Path(vec![]),
-                name: "Void".to_string(),
-                arguments: vec![]
-            })
+            return_type,
         })
     },
-    <access:Access?> "struct" <name:Name> <params:("[" <TypedName*> "]")?> "{" <children:Node*> "}" => {
+    <access:Access?> "struct" <name:Name> <params:("[" <Comma<TypedName>> "]")?> "{" <children:Node*> "}" => {
         program_arena.node_arena.insert(Node::Struct {
             access: access.unwrap_or(Access::Internal),
             name,
@@ -56,11 +60,20 @@ Node: NodeIndex = {
             children,
         })
     },
-    "interface" <name:Name> <params:("[" <TypedName*> "]")?> "{" <children:Node*> "}" => {
+    <access:Access?> "interface" <name:Name> <params:("[" <Comma<TypedName>> "]")?> "{" <children:Node*> "}" => {
         program_arena.node_arena.insert(Node::Interface {
+            access: access.unwrap_or(Access::Internal),
             name,
             params: params.unwrap_or(vec![]),
             children,
+        })
+    },
+    <access:Access?> "enum" <name:Name> <params:("[" <Comma<TypedName>> "]")?> "{" <variants:Comma<EnumVariant>> "}" => {
+        program_arena.node_arena.insert(Node::Enum {
+            access: access.unwrap_or(Access::Internal),
+            name,
+            params: params.unwrap_or(vec![]),
+            variants,
         })
     },
     <access:Access?> <unique:"unique"?> "type" <name:Name> "=" <typ:Type> ";" => {
@@ -72,6 +85,15 @@ Node: NodeIndex = {
         })
     },
     ! => { errors.push(<>); program_arena.node_arena.insert(Node::Error) },
+};
+
+EnumVariant: EnumVariant = {
+    <name:Name> <params:("(" <Comma<TypedName>> ")")?>=> {
+        EnumVariant {
+            name,
+            params: params.unwrap_or(vec![]),
+        }
+    }
 };
 
 Statement: StatementIndex = {
@@ -206,25 +228,37 @@ TypeName: TypeName = {
 };
 
 Type: TypeIndex = {
+    <simple_type:SimpleType> => {
+        simple_type
+    },
+    "(" <var:Name> ":" <inner_type:SimpleType> "where" <expression:Expression> ")" => {
+        program_arena.type_arena.insert(Type::Refinement(var, inner_type, expression))
+    },
+    <inner_type:SimpleType> "where" <expression:Expression> => {
+        program_arena.type_arena.insert(Type::Refinement("it".to_string(), inner_type, expression))
+    },
+};
+
+SimpleType: TypeIndex = {
     <type_name:TypeName> => {
         program_arena.type_arena.insert(Type::Base(type_name))
-    },
-    "(" <var:Name> ":" <inner_type:Type> "|" <expression:Expression> ")" => {
-        program_arena.type_arena.insert(Type::Refinement(var, inner_type, expression))
     },
     "{" <fields:Comma<TypedName>> "}" => {
         program_arena.type_arena.insert(Type::Row(fields))
     },
-    "&" <typ:Type> => {
+    "&" <typ:SimpleType> => {
         program_arena.type_arena.insert(Type::Reference(typ, false))
     },
-    "&mut" <typ:Type> => {
+    "&mut" <typ:SimpleType> => {
         program_arena.type_arena.insert(Type::Reference(typ, true))
     },
-    "?" <typ:Type> => {
+    "?" <typ:SimpleType> => {
         program_arena.type_arena.insert(Type::Optional(typ))
     },
-};
+    "(" <args:Comma<Type>> ")" "->" <return_type:SimpleType> => {
+        program_arena.type_arena.insert(Type::Function(args, return_type))
+    },
+}
 
 TypedName: TypedName = {
     <name:Name> ":" <typ:Type> => {

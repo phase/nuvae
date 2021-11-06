@@ -76,6 +76,7 @@ pub enum Type {
     Row(Vec<TypedName>),
     Reference(TypeIndex, bool),
     Optional(TypeIndex),
+    Function(Vec<TypeIndex>, TypeIndex),
 }
 
 #[derive(Clone, Debug)]
@@ -131,14 +132,16 @@ pub enum Node {
     Function {
         access: Access,
         name: String,
+        type_params: Vec<TypedName>,
         params: Vec<TypedName>,
-        return_type: TypeName,
+        return_type: TypeIndex,
         statements: Vec<StatementIndex>,
     },
     FunctionPrototype {
         name: String,
+        type_params: Vec<TypedName>,
         params: Vec<TypedName>,
-        return_type: TypeName,
+        return_type: TypeIndex,
     },
     Struct {
         access: Access,
@@ -146,12 +149,25 @@ pub enum Node {
         params: Vec<TypedName>,
         children: Vec<NodeIndex>,
     },
+    Enum {
+        access: Access,
+        name: String,
+        params: Vec<TypedName>,
+        variants: Vec<EnumVariant>,
+    },
     Interface {
+        access: Access,
         name: String,
         params: Vec<TypedName>,
         children: Vec<NodeIndex>,
     },
     Error,
+}
+
+#[derive(Clone, Debug)]
+pub struct EnumVariant {
+    pub name: String,
+    pub params: Vec<TypedName>,
 }
 
 #[derive(Clone, Debug)]
@@ -283,7 +299,7 @@ impl fmt::Display for Expression {
             }
             Expression::Borrow { value, mutable } => {
                 let (value_index, _) = value.into_raw_parts();
-                let m = if mutable { "mut" } else { "" };
+                let m = if *mutable { "mut" } else { "" };
                 write!(f, "{}.&{}", value_index, m)
             }
         }
