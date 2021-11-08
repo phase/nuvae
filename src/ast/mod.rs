@@ -117,6 +117,16 @@ pub enum Access {
 }
 
 #[derive(Clone, Debug)]
+pub struct AstFunction {
+    pub access: Access,
+    pub name: String,
+    pub type_params: Vec<TypedName>,
+    pub params: Vec<TypedName>,
+    pub return_type: TypeIndex,
+    pub statements: Vec<StatementIndex>,
+}
+
+#[derive(Clone, Debug)]
 pub enum Node {
     TypeAlias {
         access: Access,
@@ -129,14 +139,7 @@ pub enum Node {
         name: TypedName,
         value: Option<ExpressionIndex>,
     },
-    Function {
-        access: Access,
-        name: String,
-        type_params: Vec<TypedName>,
-        params: Vec<TypedName>,
-        return_type: TypeIndex,
-        statements: Vec<StatementIndex>,
-    },
+    Function(AstFunction),
     FunctionPrototype {
         name: String,
         type_params: Vec<TypedName>,

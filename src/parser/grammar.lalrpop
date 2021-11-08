@@ -30,14 +30,14 @@ Node: NodeIndex = {
            name: "Void".to_string(),
            arguments: vec![]
         })));
-        program_arena.node_arena.insert(Node::Function {
+        program_arena.node_arena.insert(Node::Function(AstFunction {
             access: access.unwrap_or(Access::Internal),
             name,
             type_params: type_params.unwrap_or(vec![]),
             params: args,
             return_type,
             statements
-        })
+        }))
     },
     "fun" <name:Name> <type_params:("[" <Comma<TypedName>> "]")?> "(" <args:Comma<TypedName>> ")" <return_type:(":" <Type>)?> ";" => {
         let return_type = return_type.unwrap_or(program_arena.type_arena.insert(Type::Base(TypeName {

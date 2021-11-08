@@ -1,7 +1,12 @@
+use crate::compiler::Compiler;
+use crate::ir::IrNode;
+
 mod ast;
 mod parser;
 mod diagnostic;
 mod ir;
+mod backend;
+mod compiler;
 
 fn main() {
     let test_file = "test.nuv";
@@ -133,13 +138,14 @@ fn main() {
     }
 
     ".to_string();
-    let mut parser = parser::Parser::new();
-    let parsed_program = parser.parse(ast::Path::of("test"), test_file.to_string(), test_source);
-    parser.diagnostics.emit_errors();
-    if let Some(mut program) = parsed_program {
-        for (index, exp) in program.program_arena.expression_arena.iter() {
-            println!("#{}: {}", index.into_raw_parts().0, exp.to_string(&program.program_arena));
+
+    let mut compiler = Compiler::new();
+    compiler.parse_module(ast::Path::of("test"), test_file.to_string(), test_source);
+    for (_index, module) in compiler.modules.iter() {
+        for (_node_index, node) in module.module_arena.node_arena.iter() {
+            println!("{:?}", node);
         }
     }
+
     println!("parse complete!")
 }
