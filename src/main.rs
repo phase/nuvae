@@ -145,6 +145,12 @@ fn main() {
         for (_node_index, node) in module.module_arena.node_arena.iter() {
             println!("{:?}", node);
         }
+        for (_block_index, block) in module.module_arena.block_arena.iter() {
+            println!("{:?}", block);
+        }
+        for (_ins_index, ins) in module.module_arena.instruction_arena.iter() {
+            println!("{:?}", ins);
+        }
     }
 
     println!("parse complete!")

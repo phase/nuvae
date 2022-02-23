@@ -24,7 +24,7 @@ Node: NodeIndex = {
             value: expression
         })
     },
-    <access:Access?> "fun" <name:Name> <type_params:("[" <Comma<TypedName>> "]")?> "(" <args:Comma<TypedName>> ")" <return_type:(":" <Type>)?> "{" <statements:Statement*> "}" => {
+    <access:Access?> "fun" <kind:("(" <Comma<Name>> ")")?> <name:Name> <type_params:("[" <Comma<TypedName>> "]")?> "(" <args:Comma<TypedName>> ")" <return_type:(":" <Type>)?> "{" <statements:Statement*> "}" => {
         let return_type = return_type.unwrap_or(program_arena.type_arena.insert(Type::Base(TypeName {
            path:Path(vec![]),
            name: "Void".to_string(),
@@ -181,11 +181,6 @@ BinOp3: ExpressionIndex = {
     }),
     <value:BinOp3> ".&" => program_arena.expression_arena.insert(Expression::Borrow {
         value,
-        mutable: false,
-    }),
-    <value:BinOp3> ".&mut" => program_arena.expression_arena.insert(Expression::Borrow {
-        value,
-        mutable: true,
     }),
     <aggregate:BinOp3> "." <value:BinOp4> => program_arena.expression_arena.insert(Expression::FieldAccessor {
         aggregate,

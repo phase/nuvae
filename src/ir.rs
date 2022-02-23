@@ -1,5 +1,5 @@
 use generational_arena::{Arena, Index};
-use crate::ast::Path;
+use crate::ast::{BinOpType, ExpressionIndex, Path, TypeName};
 use crate::ir::FloatTy::{F32, F64};
 use crate::ir::IntTy::*;
 use crate::ir::UIntTy::*;
@@ -26,6 +26,11 @@ impl ModuleArena {
             block_arena: Arena::new(),
             instruction_arena: Arena::new(),
         }
+    }
+
+    pub fn add_instruction(&mut self, block: &mut IrBlock, ins: IrInstruction) {
+        let index = self.instruction_arena.insert(ins);
+        block.instructions.push(index);
     }
 }
 
@@ -160,7 +165,46 @@ pub struct IrBlock {
     instructions: Vec<IrInstructionIndex>,
 }
 
+impl IrBlock {
+    fn new() -> Self {
+        Self { instructions: vec![] }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum IrInstruction {
-    IntegerLiteral(u64),
+    Ref(String),
+    NatLiteral(i64),
+    BoolLiteral(bool),
+    BinOp(IrInstructionIndex, BinOpType, IrInstructionIndex),
+    FieldAccessor {
+        aggregate: IrInstructionIndex,
+        value: IrInstructionIndex,
+    },
+    FunctionCall {
+        function: IrInstructionIndex,
+        args: Vec<IrInstructionIndex>,
+    },
+    New {
+        type_name: TypeName,
+        allocator: IrInstructionIndex,
+    },
+    Dereference {
+        pointer: IrInstructionIndex,
+    },
+    Denull {
+        optional: IrInstructionIndex,
+    },
+    Borrow {
+        value: IrInstructionIndex,
+    },
+    Branch {
+        condition: IrInstructionIndex,
+        true_branch: IrBlockIndex,
+        false_branch: IrBlockIndex,
+    },
+    Return {
+        value: IrInstructionIndex,
+    },
+    Error,
 }

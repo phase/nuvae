@@ -63,6 +63,16 @@ pub struct Program {
     pub program_arena: ProgramArena,
 }
 
+impl Program {
+    pub fn statement(&self, index: StatementIndex) -> &Statement {
+        self.program_arena.statement_arena.get(index).unwrap()
+    }
+
+    pub fn expression(&self, index: ExpressionIndex) -> &Expression {
+        self.program_arena.expression_arena.get(index).unwrap()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct TypedName {
     pub name: String,
@@ -113,7 +123,7 @@ impl From<(Path, String)> for TypeName {
 #[derive(Clone, Copy, Debug)]
 pub enum Access {
     Public,
-    Internal
+    Internal,
 }
 
 #[derive(Clone, Debug)]
@@ -194,7 +204,7 @@ pub enum Statement {
     },
     Return {
         value: ExpressionIndex,
-    }
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -223,8 +233,7 @@ pub enum Expression {
     },
     Borrow {
         value: ExpressionIndex,
-        mutable: bool,
-    }
+    },
 }
 
 impl Expression {
@@ -239,7 +248,7 @@ impl Expression {
                     format!("{}", self)
                 }
             }
-            Expression::FieldAccessor {aggregate, value } => {
+            Expression::FieldAccessor { aggregate, value } => {
                 let agg_opt = program_arena.expression_arena.get(*aggregate);
                 let value_opt = program_arena.expression_arena.get(*value);
                 if let (Some(agg_exp), Some(value_exp)) = (agg_opt, value_opt) {
@@ -255,7 +264,7 @@ impl Expression {
                 } else {
                     format!("{}", self)
                 }
-            },
+            }
             e => format!("{}", e)
         }
     }
@@ -300,10 +309,9 @@ impl fmt::Display for Expression {
                 let (optional_index, _) = optional.into_raw_parts();
                 write!(f, "{}.?", optional_index)
             }
-            Expression::Borrow { value, mutable } => {
+            Expression::Borrow { value } => {
                 let (value_index, _) = value.into_raw_parts();
-                let m = if *mutable { "mut" } else { "" };
-                write!(f, "{}.&{}", value_index, m)
+                write!(f, "{}.&", value_index)
             }
         }
     }

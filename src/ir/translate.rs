@@ -1,5 +1,7 @@
-use crate::ast::{AstFunction, Node, Program, ProgramArena, Type, TypedName, TypeIndex};
-use crate::ir::{Access, FloatTy, IntTy, IrFunction, IrNode, IrType, IrTypedName, IrTypeIndex, Module, ModuleArena, UIntTy};
+use std::borrow::Borrow;
+use crate::ast::{AstFunction, Expression, Node, Program, ProgramArena, Statement, Type, TypedName, TypeIndex};
+use crate::ir;
+use crate::ir::*;
 
 pub struct IrBuilderContext<'ctx> {
     program: &'ctx Program,
@@ -21,6 +23,19 @@ impl<'ctx> IrBuilderContext<'ctx> {
             void_index,
             unknown_index,
         }
+    }
+
+    pub fn new_block(&mut self) -> IrBlockIndex {
+        self.module_arena.block_arena.insert(IrBlock::new())
+    }
+
+    /// Insert an instruction into the instruction arena and add its index to the provided block.
+    /// This ensures that all IrInstructions are allocated into some IrBlock.
+    /// The returned index can be used in other instructions.
+    pub fn ins(&mut self, block: IrBlockIndex, ins: IrInstruction) -> IrInstructionIndex {
+        let index = self.module_arena.instruction_arena.insert(ins);
+        self.module_arena.block_arena.get_mut(block).unwrap().instructions.push(index);
+        index
     }
 }
 
@@ -91,12 +106,93 @@ impl IrBuilder {
     }
 
     fn build_function(&self, ctx: &mut IrBuilderContext, func: &AstFunction) -> IrNode {
+        let mut blocks = vec![];
+        let mut current_block = ctx.new_block();
+        blocks.push(current_block.clone());
+
+        for s_index in &func.statements {
+            let ast_statement = ctx.program.statement(s_index.clone());
+            self.build_statement(ctx, func, ast_statement, &mut current_block);
+        }
         IrNode::Function(IrFunction {
             access: Access::from(func.access),
             name: func.name.clone(),
             type_params: vec![],
             return_type: self.build_type(ctx, func.return_type),
-            blocks: vec![],
+            blocks,
         })
+    }
+
+    fn build_statement(&self, ctx: &mut IrBuilderContext, func: &AstFunction, stmt: &Statement, current_block: &mut IrBlockIndex) {
+        match stmt {
+            Statement::If { .. } => {}
+            Statement::Call { function, args } => {
+                let fun_ins = self.build_expression(ctx, func, stmt, function, current_block);
+                let mut arg_insx = Vec::with_capacity(args.len());
+                for arg in args {
+                    let arg_ins = self.build_expression(ctx, func, stmt, arg, current_block);
+                    arg_insx.push(arg_ins);
+                }
+                ctx.ins(*current_block, IrInstruction::FunctionCall {
+                    function: fun_ins,
+                    args: arg_insx,
+                });
+            }
+            Statement::Let { .. } => {}
+            Statement::Assign { .. } => {}
+            Statement::Return { value } => {
+                let value_ins = self.build_expression(ctx, func, stmt, value, current_block);
+                ctx.ins(*current_block, IrInstruction::Return {
+                    value: value_ins
+                });
+            }
+        }
+    }
+
+    fn build_expression(&self, ctx: &mut IrBuilderContext, func: &AstFunction,
+                        stmt: &Statement, exp: &ExpressionIndex, current_block: &mut IrBlockIndex) -> IrInstructionIndex {
+        let exp = ctx.program.expression(*exp);
+        let todo = IrInstruction::Ref("TODO".to_string());
+        let ins = match exp {
+            Expression::Ref(s) => IrInstruction::Ref(s.clone()),
+            Expression::NatLiteral(i) => IrInstruction::NatLiteral(i.clone()),
+            Expression::BoolLiteral(b) => IrInstruction::BoolLiteral(b.clone()),
+            Expression::BinOp(lhs, op, rhs) => {
+                let lhs_ins = self.build_expression(ctx, func, stmt, lhs, current_block);
+                let rhs_ins = self.build_expression(ctx, func, stmt, rhs, current_block);
+                IrInstruction::BinOp(lhs_ins, op.clone(), rhs_ins)
+            }
+            Expression::FieldAccessor { aggregate, value } => {
+                todo
+            }
+            Expression::FunctionCall { function, args } => {
+                let fun_ins = self.build_expression(ctx, func, stmt, function, current_block);
+                let mut arg_insx = Vec::with_capacity(args.len());
+                for arg in args {
+                    let arg_ins = self.build_expression(ctx, func, stmt, arg, current_block);
+                    arg_insx.push(arg_ins);
+                }
+                IrInstruction::FunctionCall {
+                    function: fun_ins,
+                    args: arg_insx,
+                }
+            }
+            Expression::New { type_name, allocator } => {
+                todo
+            }
+            Expression::Dereference { pointer } => {
+                let pointer_ins = self.build_expression(ctx, func, stmt, pointer, current_block);
+                IrInstruction::Dereference { pointer: pointer_ins }
+            }
+            Expression::Denull { optional } => {
+                let optional_ins = self.build_expression(ctx, func, stmt, optional, current_block);
+                IrInstruction::Denull { optional: optional_ins }
+            }
+            Expression::Borrow { value } => {
+                let value_ins = self.build_expression(ctx, func, stmt, value, current_block);
+                IrInstruction::Borrow { value: value_ins }
+            }
+        };
+        ctx.ins(*current_block, ins)
     }
 }
