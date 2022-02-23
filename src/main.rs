@@ -151,6 +151,9 @@ fn main() {
         for (_ins_index, ins) in module.module_arena.instruction_arena.iter() {
             println!("{:?}", ins);
         }
+        for (_ins_index, typ) in module.module_arena.type_arena.iter() {
+            println!("{:?}", typ);
+        }
     }
 
     println!("parse complete!")

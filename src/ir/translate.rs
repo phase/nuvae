@@ -1,5 +1,5 @@
 use std::borrow::Borrow;
-use crate::ast::{AstFunction, Expression, Node, Program, ProgramArena, Statement, Type, TypedName, TypeIndex};
+use crate::ast::{AstFunction, Expression, Node, Program, ProgramArena, Statement, StatementIndex, Type, TypedName, TypeIndex};
 use crate::ir;
 use crate::ir::*;
 
@@ -71,8 +71,8 @@ impl IrBuilder {
         }
     }
 
-    fn build_type(&self, ctx: &mut IrBuilderContext, ast_type: TypeIndex) -> IrTypeIndex {
-        if let Some(ast_type) = ctx.program.program_arena.type_arena.get(ast_type) {
+    fn build_type(&self, ctx: &mut IrBuilderContext, ast_type: &TypeIndex) -> IrTypeIndex {
+        if let Some(ast_type) = ctx.program.program_arena.type_arena.get(*ast_type) {
             match ast_type {
                 Type::Base(name) => {
                     if let Some(int_type) = IntTy::from(&name.name) {
@@ -98,10 +98,10 @@ impl IrBuilder {
         }
     }
 
-    fn build_typed_name(&self, ctx: &mut IrBuilderContext, ast_typed_name: TypedName) -> IrTypedName {
+    fn build_typed_name(&self, ctx: &mut IrBuilderContext, ast_typed_name: &TypedName) -> IrTypedName {
         IrTypedName {
-            typ: ast_typed_name.typ.map_or(ctx.void_index, |ty| self.build_type(ctx, ty)),
-            name: ast_typed_name.name,
+            typ: ast_typed_name.typ.map_or(ctx.void_index, |ty| self.build_type(ctx, &ty)),
+            name: ast_typed_name.name.clone(),
         }
     }
 
@@ -111,21 +111,46 @@ impl IrBuilder {
         blocks.push(current_block.clone());
 
         for s_index in &func.statements {
-            let ast_statement = ctx.program.statement(s_index.clone());
-            self.build_statement(ctx, func, ast_statement, &mut current_block);
+            self.build_statement(ctx, func, s_index, &mut current_block);
         }
         IrNode::Function(IrFunction {
             access: Access::from(func.access),
             name: func.name.clone(),
             type_params: vec![],
-            return_type: self.build_type(ctx, func.return_type),
+            return_type: self.build_type(ctx, &func.return_type),
             blocks,
         })
     }
 
-    fn build_statement(&self, ctx: &mut IrBuilderContext, func: &AstFunction, stmt: &Statement, current_block: &mut IrBlockIndex) {
+    fn build_statement(&self, ctx: &mut IrBuilderContext, func: &AstFunction, s_index: &StatementIndex, current_block: &mut IrBlockIndex) {
+        let stmt = ctx.program.statement(s_index.clone());
         match stmt {
-            Statement::If { .. } => {}
+            Statement::If { condition, body, else_if } => {
+                let cond_ins = self.build_expression(ctx, func, stmt, condition, current_block);
+                // make the blocks we can branch to
+                let true_branch = ctx.new_block();
+                let false_branch = ctx.new_block();
+
+                // add the branch ins to the current block
+                let branch = IrInstruction::Branch {
+                    condition: cond_ins,
+                    true_branch,
+                    false_branch,
+                };
+                ctx.ins(*current_block, branch);
+
+                // build the true block
+                *current_block = true_branch;
+                for stmt in body {
+                    self.build_statement(ctx, func, stmt, current_block);
+                }
+
+                // build the false block
+                *current_block = false_branch;
+                if let Some(stmt) = else_if {
+                    self.build_statement(ctx, func, stmt, current_block);
+                }
+            }
             Statement::Call { function, args } => {
                 let fun_ins = self.build_expression(ctx, func, stmt, function, current_block);
                 let mut arg_insx = Vec::with_capacity(args.len());
@@ -152,7 +177,7 @@ impl IrBuilder {
     fn build_expression(&self, ctx: &mut IrBuilderContext, func: &AstFunction,
                         stmt: &Statement, exp: &ExpressionIndex, current_block: &mut IrBlockIndex) -> IrInstructionIndex {
         let exp = ctx.program.expression(*exp);
-        let todo = IrInstruction::Ref("TODO".to_string());
+        // let todo = IrInstruction::Ref("TODO".to_string());
         let ins = match exp {
             Expression::Ref(s) => IrInstruction::Ref(s.clone()),
             Expression::NatLiteral(i) => IrInstruction::NatLiteral(i.clone()),
@@ -163,7 +188,12 @@ impl IrBuilder {
                 IrInstruction::BinOp(lhs_ins, op.clone(), rhs_ins)
             }
             Expression::FieldAccessor { aggregate, value } => {
-                todo
+                let agg_ins = self.build_expression(ctx, func, stmt, aggregate, current_block);
+                let value_ins = self.build_expression(ctx, func, stmt, value, current_block);
+                IrInstruction::FieldAccessor {
+                    aggregate: agg_ins,
+                    value: value_ins,
+                }
             }
             Expression::FunctionCall { function, args } => {
                 let fun_ins = self.build_expression(ctx, func, stmt, function, current_block);
@@ -177,8 +207,12 @@ impl IrBuilder {
                     args: arg_insx,
                 }
             }
-            Expression::New { type_name, allocator } => {
-                todo
+            Expression::New { typ, allocator } => {
+                let alloc_ins = self.build_expression(ctx, func, stmt, allocator, current_block);
+                IrInstruction::New {
+                    typ: self.build_type(ctx, typ),
+                    allocator: alloc_ins,
+                }
             }
             Expression::Dereference { pointer } => {
                 let pointer_ins = self.build_expression(ctx, func, stmt, pointer, current_block);

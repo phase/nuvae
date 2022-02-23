@@ -1,6 +1,6 @@
 use generational_arena::{Arena, Index};
 use crate::ast::{BinOpType, ExpressionIndex, Path, TypeName};
-use crate::ir::FloatTy::{F32, F64};
+use crate::ir::FloatTy::*;
 use crate::ir::IntTy::*;
 use crate::ir::UIntTy::*;
 
@@ -41,6 +41,12 @@ pub struct Module {
     pub module_arena: ModuleArena,
 }
 
+impl Module {
+    pub fn typ(&self, index: IrTypeIndex) -> &IrType {
+        self.module_arena.type_arena.get(index).unwrap()
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum Access {
     Public,
@@ -79,6 +85,17 @@ impl IntTy {
             &_ => None
         }
     }
+
+    pub fn bits(&self) -> u32 {
+        match self {
+            ISize => 64, // todo
+            I8 => 8,
+            I16 => 16,
+            I32 => 32,
+            I64 => 64,
+            I128 => 128,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Copy)]
@@ -103,20 +120,44 @@ impl UIntTy {
             &_ => None
         }
     }
+
+    pub fn bits(&self) -> u32 {
+        match self {
+            USize => 64, // todo
+            U8 => 8,
+            U16 => 16,
+            U32 => 32,
+            U64 => 64,
+            U128 => 128,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Copy)]
 pub enum FloatTy {
+    F16,
     F32,
     F64,
+    F128,
 }
 
 impl FloatTy {
     pub fn from<Str: AsRef<str>>(name: Str) -> Option<Self> {
         match name.as_ref() {
+            "Float16" => Some(F16),
             "Float32" => Some(F32),
             "Float64" => Some(F64),
+            "Float128" => Some(F128),
             &_ => None
+        }
+    }
+
+    pub fn bits(&self) -> u32 {
+        match self {
+            F16 => 16,
+            F32 => 32,
+            F64 => 64,
+            F128 => 128,
         }
     }
 }
@@ -129,6 +170,7 @@ pub struct IrTypedName {
 
 #[derive(Clone, Debug)]
 pub enum IrType {
+    Bool,
     Int(IntTy),
     UInt(UIntTy),
     Float(FloatTy),
@@ -186,7 +228,7 @@ pub enum IrInstruction {
         args: Vec<IrInstructionIndex>,
     },
     New {
-        type_name: TypeName,
+        typ: IrTypeIndex,
         allocator: IrInstructionIndex,
     },
     Dereference {

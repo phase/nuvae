@@ -194,8 +194,8 @@ BinOp4: ExpressionIndex = {
         function,
         args,
     }),
-    "new" <type_name:TypeName> "in" <allocator:Term> => program_arena.expression_arena.insert(Expression::New {
-        type_name,
+    "new" <typ:Type> "in" <allocator:Term> => program_arena.expression_arena.insert(Expression::New {
+        typ,
         allocator,
     }),
     Term,

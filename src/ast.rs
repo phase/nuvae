@@ -222,7 +222,7 @@ pub enum Expression {
         args: Vec<ExpressionIndex>,
     },
     New {
-        type_name: TypeName,
+        typ: TypeIndex,
         allocator: ExpressionIndex,
     },
     Dereference {
@@ -257,10 +257,11 @@ impl Expression {
                     format!("{}", self)
                 }
             }
-            Expression::New { type_name, allocator } => {
+            Expression::New { typ, allocator } => {
+                let typ_opt = program_arena.type_arena.get(*typ);
                 let allocator_opt = program_arena.expression_arena.get(*allocator);
-                if let Some(allocator_exp) = allocator_opt {
-                    format!("new {} in {}", type_name.to_string(), allocator_exp.to_string(program_arena))
+                if let (Some(allocator_exp), Some(typ)) = (allocator_opt, typ_opt) {
+                    format!("new {:?} in {}", typ, allocator_exp.to_string(program_arena))
                 } else {
                     format!("{}", self)
                 }
@@ -297,9 +298,10 @@ impl fmt::Display for Expression {
                 let arg_indices: Vec<usize> = args.iter().map(|arg| arg.into_raw_parts().0).collect();
                 write!(f, "#{}({:?})", function_index, arg_indices)
             }
-            Expression::New { type_name, allocator } => {
+            Expression::New { typ, allocator } => {
+                let (type_index, _) = typ.into_raw_parts();
                 let (allocator_index, _) = allocator.into_raw_parts();
-                write!(f, "new {} in #{}", type_name.to_string(), allocator_index)
+                write!(f, "new #{} in #{}", type_index, allocator_index)
             }
             Expression::Dereference { pointer } => {
                 let (pointer_index, _) = pointer.into_raw_parts();
